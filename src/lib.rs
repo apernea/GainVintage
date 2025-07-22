@@ -1,3 +1,5 @@
+mod editor;
+
 use nih_plug::{prelude::*, util::db_to_gain};
 use nih_plug_egui::EguiState;
 use std::sync::{Arc, atomic::Ordering};
@@ -129,7 +131,47 @@ impl Plugin for GainVintage{
     fn editor(&mut self, async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
         editor::create(self.params.clone(), self.peak_meter.clone())
     }
-    fn process(&mut self, buffer: &mut Buffer, aux: &mut AuxiliaryBuffers, context: &mut impl ProcessContext<Self>) -> ProcessStatus {
+
+    fn initialize(&mut self,
+                  audio_io_layout: &AudioIOLayout,
+                  buffer_config: &BufferConfig,
+                  context: &mut impl InitContext<Self>) -> bool {
+        true
+    }
+
+    fn reset(&mut self) {}
+    fn process(&mut self,
+               buffer: &mut Buffer,
+               aux: &mut AuxiliaryBuffers,
+               context: &mut impl ProcessContext<Self>) -> ProcessStatus {
         todo!()
     }
 }
+
+impl ClapPlugin for GainVintage{
+    const CLAP_ID: &'static str = "com.alexpernea.gainvintage";
+    const CLAP_DESCRIPTION: Option<&'static str> = Some("Vintage gain plugin");
+    const CLAP_MANUAL_URL: Option<&'static str> = Some(Self::URL);
+    const CLAP_SUPPORT_URL: Option<&'static str> = None;
+    const CLAP_FEATURES: &'static [ClapFeature] = &[
+        ClapFeature::AudioEffect,
+        ClapFeature::Stereo,
+        ClapFeature::Mono,
+        ClapFeature::Utility,
+    ];
+}
+
+impl Vst3Plugin for GainVintage {
+    const VST3_CLASS_ID: [u8; 16] = [
+        0xf4, 0xa1, 0x61, 0x26,
+        0x6c, 0x8e,
+        0x4c, 0xf0,
+        0x99, 0x73,
+        0x5f, 0x6a, 0xeb, 0xab, 0xc1, 0x19,
+    ];
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] =
+        &[Vst3SubCategory::Fx, Vst3SubCategory::Tools];
+}
+
+nih_export_clap!(GainVintage);
+nih_export_vst3!(GainVintage);
