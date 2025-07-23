@@ -14,9 +14,10 @@ impl Enum for Mode {
         &["Tube", "Tape"]
     }
 
-    fn ids() -> &'static [&'static str] {
-        &["tube", "tape"]
+    fn ids() -> Option<&'static [&'static str]> {
+        Some(&["tube", "tape"])
     }
+
 
     fn to_index(self) -> usize {
         match self {
@@ -29,7 +30,7 @@ impl Enum for Mode {
         match index {
             0 => Mode::Tube,
             1 => Mode::Tape,
-            _ => Mode::Tube, // fallback
+            _ => Mode::Tube,
         }
     }
 }
@@ -40,6 +41,7 @@ pub struct GainVintage{
     peak_meter: Arc<AtomicF32>,
 }
 
+#[derive(Params)]
 pub struct PluginParams{
     #[persist = "editor-state"]
     editor_state: Arc<EguiState>,
@@ -58,9 +60,6 @@ pub struct PluginParams{
 
     #[id = "output_trim"]
     pub output_trim: FloatParam,
-
-    #[id = "mute"]
-    pub mute: BoolParam,
 }
 
 impl Default for GainVintage{
@@ -92,7 +91,6 @@ impl Default for PluginParams{
             drive: FloatParam::new("Drive", 0.5, FloatRange::Linear { min: 0.0, max: 1.0 }),
             input_trim: FloatParam::new("Input Trim", 0.0, FloatRange::Linear { min: -12.0, max: 12.0 }),
             output_trim: FloatParam::new("Output Trim", 0.0, FloatRange::Linear { min: -12.0, max: 12.0 }),
-            mute: BoolParam::new("Mute", false),
         }
     }
 }
@@ -118,7 +116,7 @@ impl Plugin for GainVintage{
             ..AudioIOLayout::const_default()
         },
     ];
-    
+
     const MIDI_INPUT: MidiConfig = MidiConfig::None;
     const SAMPLE_ACCURATE_AUTOMATION: bool = true;
     type SysExMessage = ();
@@ -128,23 +126,97 @@ impl Plugin for GainVintage{
         self.params.clone()
     }
 
-    fn editor(&mut self, async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
         editor::create(self.params.clone(), self.peak_meter.clone())
     }
 
     fn initialize(&mut self,
-                  audio_io_layout: &AudioIOLayout,
-                  buffer_config: &BufferConfig,
-                  context: &mut impl InitContext<Self>) -> bool {
+                  _audio_io_layout: &AudioIOLayout,
+                  _buffer_config: &BufferConfig,
+                  _context: &mut impl InitContext<Self>) -> bool {
         true
     }
 
     fn reset(&mut self) {}
-    fn process(&mut self,
-               buffer: &mut Buffer,
-               aux: &mut AuxiliaryBuffers,
-               context: &mut impl ProcessContext<Self>) -> ProcessStatus {
-        todo!()
+    fn process(
+        &mut self,
+        buffer: &mut Buffer,
+        _aux: &mut AuxiliaryBuffers,
+        _context: &mut impl ProcessContext<Self>,
+    ) -> ProcessStatus {
+        use nih_plug::util::db_to_gain;
+        use std::sync::atomic::Ordering;
+
+        for channel_samples in buffer.iter_samples() {
+            let mut block_peak = 0.0f32;
+
+            // --- 1. Fetch parameter values ---
+            let input_trim_db = self.params.input_trim.smoothed.next();
+            let output_trim_db = self.params.output_trim.smoothed.next();
+            let gain_db = self.params.gain.smoothed.next();
+            let drive = self.params.drive.value();
+            let mode = self.params.mode.value();
+
+            // --- 2. Convert to linear gains ---
+            let input_gain = db_to_gain(input_trim_db);
+            let output_gain = db_to_gain(output_trim_db);
+            let gain = db_to_gain(gain_db);
+
+            // --- 3. Process each sample in this channel ---
+            for sample in channel_samples {
+                let mut x = *sample;
+
+                // Apply input trim
+                x *= input_gain;
+
+                // Apply saturation
+                x = match mode {
+                    Mode::Tube => {
+                        // Tube: soft clipping + symmetric distortion
+                        let shaped = (x + drive * x.powi(3)).tanh();
+                        shaped
+                    }
+                    Mode::Tape => {
+                        // Tape: asymmetric saturation with compression
+                        let drive_amt = drive * 2.5;
+                        x - (drive_amt * x.powi(3)) / (1.0 + drive_amt * x.abs())
+                    }
+                };
+
+                // Apply main gain
+                x *= gain;
+
+
+                // Apply output trim
+                x *= output_gain;
+
+                // Store back into buffer
+                *sample = x;
+
+                // Track peak
+                block_peak = block_peak.max(x.abs());
+            }
+
+            // --- 4. Update Peak Meter (if editor is open) ---
+            if self.params.editor_state.is_open() {
+                let current = self.peak_meter.load(Ordering::Relaxed);
+
+                let new_peak = if block_peak > current {
+                    block_peak // fast attack
+                } else {
+                    current * self.peak_meter_decay_factor // slow decay
+                };
+
+                let clamped = if new_peak < util::MINUS_INFINITY_GAIN {
+                    0.0
+                } else {
+                    new_peak
+                };
+
+                self.peak_meter.store(clamped, Ordering::Relaxed);
+            }
+        }
+        ProcessStatus::Normal
     }
 }
 
