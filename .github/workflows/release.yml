@@ -26,7 +26,7 @@ jobs:
         run: cargo xtask bundle -p gain-vintage --release
 
       - name: Upload Build Artifact for Debugging
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: GainVintage-Build-Debug
           path: target/bundled/gain-vintage.vst3
