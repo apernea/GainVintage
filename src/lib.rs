@@ -147,6 +147,17 @@ impl Plugin for GainVintage{
         use nih_plug::util::db_to_gain;
         use std::sync::atomic::Ordering;
 
+        fn soft_clip(x: f32) -> f32 {
+            const CLIP_THRESHOLD: f32 = 0.95;
+            if x > CLIP_THRESHOLD {
+                CLIP_THRESHOLD + (x - CLIP_THRESHOLD) / (1.0 + ((x - CLIP_THRESHOLD) / (1.0 - CLIP_THRESHOLD)).powi(2))
+            } else if x < -CLIP_THRESHOLD {
+                -CLIP_THRESHOLD + (x + CLIP_THRESHOLD) / (1.0 + ((-x - CLIP_THRESHOLD) / (1.0 - CLIP_THRESHOLD)).powi(2))
+            } else {
+                x
+            }
+        }
+
         for channel_samples in buffer.iter_samples() {
             let mut block_peak = 0.0f32;
 
@@ -169,26 +180,34 @@ impl Plugin for GainVintage{
                 // Apply input trim
                 x *= input_gain;
 
+                // Store dry version for blending
+                let dry = x;
+
                 // Apply saturation
                 x = match mode {
                     Mode::Tube => {
-                        // Tube: soft clipping + symmetric distortion
-                        let shaped = (x + drive * x.powi(3)).tanh();
+                        // More noticeable Tube distortion
+                        let shaped = (x * (1.5 + drive)).tanh() + 0.15 * x.powi(3);
                         shaped
                     }
                     Mode::Tape => {
-                        // Tape: asymmetric saturation with compression
-                        let drive_amt = drive * 2.5;
-                        x - (drive_amt * x.powi(3)) / (1.0 + drive_amt * x.abs())
+                        // Tape-style tanh + output volume control
+                        let shaped = (x * drive * 3.5).tanh() * 0.8;
+                        shaped
                     }
                 };
+
+                // Blend dry/wet using drive parameter
+                x = dry * (1.0 - drive) + x * drive;
 
                 // Apply main gain
                 x *= gain;
 
-
                 // Apply output trim
                 x *= output_gain;
+
+                // Apply final soft clipping
+                x = soft_clip(x);
 
                 // Store back into buffer
                 *sample = x;
@@ -216,6 +235,7 @@ impl Plugin for GainVintage{
                 self.peak_meter.store(clamped, Ordering::Relaxed);
             }
         }
+
         ProcessStatus::Normal
     }
 }
