@@ -28,4 +28,3 @@ jobs:
           files: target/bundled/gain-vintage.vst3
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-C
