@@ -1,36 +1,32 @@
-name: Release GainVintage VST3 (macOS)
+name: Build & Debug GainVintage VST3 (macOS)
 
 on:
   push:
     tags:
-      - 'v*'  # Trigger on version tags like v1.0.0, v1.0.1, etc.
+      - 'v*'
 
 jobs:
   build-macos:
     runs-on: macos-latest
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Install Rust Toolchain
+      - name: Install Rust
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
           override: true
 
-      - name: Install CMake (for VST3 SDK)
+      - name: Install CMake
         run: brew install cmake
 
-      - name: Build Plugin (VST3 Bundle)
+      - name: Build Plugin
         run: cargo xtask bundle -p gain-vintage --release
 
-      - name: Package .vst3 Bundle into ZIP
-        run: cd target/bundled && zip -r gain-vintage.vst3.zip gain-vintage.vst3
-
-      - name: Upload VST3 ZIP as Release Asset
-        uses: softprops/action-gh-release@v1
+      - name: Upload Build Artifact for Debugging
+        uses: actions/upload-artifact@v3
         with:
-          files: target/bundled/gain-vintage.vst3.zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          name: GainVintage-Build-Debug
+          path: target/bundled/gain-vintage.vst3
