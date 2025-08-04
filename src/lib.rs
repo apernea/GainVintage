@@ -39,6 +39,9 @@ pub struct GainVintage{
     params: Arc<PluginParams>,
     peak_meter_decay_factor: f32,
     peak_meter: Arc<AtomicF32>,
+
+    params_wrapper: Option<Arc<std::sync::Mutex<Option<Arc<PluginParams>>>>>,
+    peak_meter_wrapper: Option<Arc<std::sync::Mutex<Option<Arc<AtomicF32>>>>>,
 }
 
 #[derive(Params)]
@@ -62,12 +65,18 @@ pub struct PluginParams{
     pub output_trim: FloatParam,
 }
 
-impl Default for GainVintage{
+impl Default for GainVintage {
     fn default() -> Self {
-        Self{
-            params: Arc::new(PluginParams::default()),
+        let params = Arc::new(PluginParams::default());
+        let peak_meter = Arc::new(AtomicF32::new(util::MINUS_INFINITY_DB));
+
+        Self {
+            params: params.clone(),
             peak_meter_decay_factor: 0.9996,
-            peak_meter: Arc::new(AtomicF32::new(util::MINUS_INFINITY_DB)),
+            peak_meter: peak_meter.clone(),
+
+            params_wrapper: Some(Arc::new(std::sync::Mutex::new(Some(params)))),
+            peak_meter_wrapper: Some(Arc::new(std::sync::Mutex::new(Some(peak_meter)))),
         }
     }
 }
@@ -127,7 +136,13 @@ impl Plugin for GainVintage{
     }
 
     fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        editor::create(self.params.clone(), self.peak_meter.clone())
+        if let (Some(params_wrapper), Some(peak_meter_wrapper)) =
+            (self.params_wrapper.clone(), self.peak_meter_wrapper.clone())
+        {
+            editor::create_wrapped(params_wrapper, peak_meter_wrapper)
+        } else {
+            None
+        }
     }
 
     fn initialize(&mut self,
@@ -237,6 +252,21 @@ impl Plugin for GainVintage{
         }
 
         ProcessStatus::Normal
+    }
+}
+
+impl Drop for GainVintage {
+    fn drop(&mut self) {
+        if let Some(ref wrapper) = self.params_wrapper {
+            if let Ok(mut lock) = wrapper.lock() {
+                *lock = None;
+            }
+        }
+        if let Some(ref wrapper) = self.peak_meter_wrapper {
+            if let Ok(mut lock) = wrapper.lock() {
+                *lock = None;
+            }
+        }
     }
 }
 
